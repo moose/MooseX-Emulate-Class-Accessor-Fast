@@ -25,6 +25,7 @@ my $class = "Testing::Class::Accessor::Fast";
     }
   );
 
+  $meta->make_immutable;
   $class->mk_accessors(qw( foo bar yar car mar test));
   $class->mk_ro_accessors(qw(static unchanged));
   $class->mk_wo_accessors(qw(sekret double_sekret));

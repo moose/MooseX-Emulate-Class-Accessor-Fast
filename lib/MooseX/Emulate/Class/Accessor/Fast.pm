@@ -3,6 +3,9 @@ package MooseX::Emulate::Class::Accessor::Fast;
 use Moose::Role;
 use Class::MOP ();
 use Scalar::Util ();
+use Carp ();
+
+use MooseX::Emulate::Class::Accessor::Fast::Meta::Accessor ();
 
 our $VERSION = '0.00600';
 
@@ -75,6 +78,19 @@ my $locate_metaclass = sub {
     || Moose::Meta::Class->initialize($class);
 };
 
+my $reopen_package_if_needed = sub {
+  my $self = shift;
+  my $meta = $locate_metaclass->($self);
+  my $immutable = $meta->is_immutable;
+  if ($immutable) {
+    $meta->make_mutable;
+    my $class = Scalar::Util::blessed($self) || $self;
+    Carp::cluck("Class $class was immutable, but needs to be re-opened!");
+    return sub { $meta->make_immutable; };
+  }
+  return sub {};
+};
+
 sub BUILD {
   my $self = shift;
   my %args;
@@ -102,6 +118,7 @@ will be passed. Please see L<Class::MOP::Attribute> for more information.
 sub mk_accessors{
   my $self = shift;
   my $meta = $locate_metaclass->($self);
+  my $reclose = $reopen_package_if_needed->($self);
   for my $attr_name (@_){
     my $reader = $self->accessor_name_for($attr_name);
     my $writer = $self->mutator_name_for( $attr_name);
@@ -109,7 +126,9 @@ sub mk_accessors{
     #dont overwrite existing methods
     if($reader eq $writer){
       my %opts = ( $meta->has_method($reader) ? () : (accessor => $reader) );
-      my $attr = $meta->add_attribute($attr_name, %opts);
+      my $attr = $meta->find_attribute_by_name($attr_name) || $meta->add_attribute($attr_name, %opts, 
+        traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+      );
       if($attr_name eq $reader){
         my $alias = "_${attr_name}_accessor";
         next if $meta->has_method($alias);
@@ -119,9 +138,12 @@ sub mk_accessors{
     } else {
       my @opts = ( $meta->has_method($writer) ? () : (writer => $writer) );
       push(@opts, (reader => $reader)) unless $meta->has_method($reader);
-      $meta->add_attribute($attr_name, @opts);
+      my $attr = $meta->find_attribute_by_name($attr_name) || $meta->add_attribute($attr_name, @opts, 
+        traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+      );
     }
   }
+  $reclose->();
 }
 
 =head2 mk_ro_accessors @field_names
@@ -133,15 +155,19 @@ Create read-only accessors.
 sub mk_ro_accessors{
   my $self = shift;
   my $meta = $locate_metaclass->($self);
+  my $reclose = $reopen_package_if_needed->($self);
   for my $attr_name (@_){
     my $reader = $self->accessor_name_for($attr_name);
     my @opts = ($meta->has_method($reader) ? () : (reader => $reader) );
-    my $attr = $meta->add_attribute($attr_name, @opts);
+    my $attr = $meta->add_attribute($attr_name, @opts, 
+      traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+    ) if scalar(@opts);
     if($reader eq $attr_name && $reader eq $self->mutator_name_for($attr_name)){
       $meta->add_method("_${attr_name}_accessor" => $attr->get_read_method_ref)
         unless $meta->has_method("_${attr_name}_accessor");
     }
   }
+  $reclose->();
 }
 
 =head2 mk_ro_accessors @field_names
@@ -154,15 +180,19 @@ Create write-only accessors.
 sub mk_wo_accessors{
   my $self = shift;
   my $meta = $locate_metaclass->($self);
+  my $reclose = $reopen_package_if_needed->($self);
   for my $attr_name (@_){
     my $writer = $self->mutator_name_for($attr_name);
     my @opts = ($meta->has_method($writer) ? () : (writer => $writer) );
-    my $attr = $meta->add_attribute($attr_name, @opts);
+    my $attr = $meta->add_attribute($attr_name, @opts, 
+      traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+    ) if scalar(@opts);
     if($writer eq $attr_name && $writer eq $self->accessor_name_for($attr_name)){
       $meta->add_method("_${attr_name}_accessor" => $attr->get_write_method_ref)
         unless $meta->has_method("_${attr_name}_accessor");
     }
   }
+  $reclose->();
 }
 
 =head2 follow_best_practices
@@ -175,11 +205,13 @@ See original L<Class::Accessor> documentation for more information.
 sub follow_best_practice{
   my $self = shift;
   my $meta = $locate_metaclass->($self);
+  my $reclose = $reopen_package_if_needed->($self);
 
   $meta->remove_method('mutator_name_for');
   $meta->remove_method('accessor_name_for');
   $meta->add_method('mutator_name_for',  sub{ return "set_".$_[1] });
   $meta->add_method('accessor_name_for', sub{ return "get_".$_[1] });
+  $reclose->();
 }
 
 =head2 mutator_name_for
@@ -208,7 +240,7 @@ sub set{
   confess "No such attribute  '$k'"
     unless ( my $attr = $meta->find_attribute_by_name($k) );
   my $writer = $attr->get_write_method;
-  $self->$writer(@_ > 1 ? [@_] : @_);
+  $self->$writer(@_);
 }
 
 =head2 get
@@ -236,30 +268,45 @@ sub get{
 sub make_accessor {
   my($class, $field) = @_;
   my $meta = $locate_metaclass->($class);
-  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field); 
+  my $reclose = $reopen_package_if_needed->($class);
+  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field, 
+      traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+  ); 
   my $reader = $attr->get_read_method_ref;
   my $writer = $attr->get_write_method_ref;
-  return sub {
+  my $accessor = sub {
     my $self = shift;
     return $reader->($self) unless @_;
     return $writer->($self,(@_ > 1 ? [@_] : @_));
-  }
+  };
+  $reclose->();
+  return $accessor;
 }
 
 
 sub make_ro_accessor {
   my($class, $field) = @_;
   my $meta = $locate_metaclass->($class);
-  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field); 
-  return $attr->get_read_method_ref;
+  my $reclose = $reopen_package_if_needed->($class);
+  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field, 
+      traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+  ); 
+  my $method_ref = $attr->get_read_method_ref;
+  $reclose->();
+  return $method_ref;
 }
 
 
 sub make_wo_accessor {
   my($class, $field) = @_;
   my $meta = $locate_metaclass->($class);
-  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field); 
-  return $attr->get_write_method_ref;
+  my $reclose = $reopen_package_if_needed->($class);
+  my $attr = $meta->find_attribute_by_name($field) || $meta->add_attribute($field, 
+      traits => ['MooseX::Emulate::Class::Accessor::Fast::Meta::Role::Attribute']
+  ); 
+  my $method_ref = $attr->get_write_method_ref;
+  $reclose->();
+  return $method_ref;
 }
 
 1;
