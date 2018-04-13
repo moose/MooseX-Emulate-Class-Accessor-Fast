@@ -312,15 +312,15 @@ L<Class::MOP::Attribute>, L<MooseX::Adopt::Class::Accessor::Fast>
 
 =head1 AUTHORS
 
-Guillermo Roditi (groditi) E<lt>groditi@cpan.orgE<gt>
+Guillermo Roditi (groditi) <groditi@cpan.org>
 
 With contributions from:
 
 =over 4
 
-=item Tomas Doran (t0m) E<lt>bobtfish@bobtfish.netE<gt>
+=item Tomas Doran (t0m) <bobtfish@bobtfish.net>
 
-=item Florian Ragwitz (rafl) E<lt>rafl@debian.orgE<gt>
+=item Florian Ragwitz (rafl) <rafl@debian.org>
 
 =back
 
