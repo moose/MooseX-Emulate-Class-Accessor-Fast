@@ -1,5 +1,7 @@
 Revision history for MooseX-Emulate-Class-Accessor-Fast
 
+          - Releasing as stable
+
 0.009_031 - 2018-06-22
           - Repackaged with ExtUtils::MakeMaker (and Distar) rather than
             Module::Install
